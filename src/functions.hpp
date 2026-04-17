@@ -56,6 +56,9 @@ struct Card {
     }
 };
 
+// Forward declaration - fixes "evaluateHand was not declared in this scope"
+HandResult evaluateHand(const std::vector<Card>& hand);
+
 // --- TIMING UTILS ---
 inline void sleepMs(int ms) {
     std::this_thread::sleep_for(std::chrono::milliseconds(ms));
