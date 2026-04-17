@@ -83,22 +83,22 @@ inline Decision cpuDecideBet(const std::vector<Card>& hand, int currentBetToCall
     bool canRaise = (raisesSoFar < maxRaises);
     
     if (currentBetToCall == 0) {
-        if (canRaise && score > 2000000 && luck < 60) {
+        if (canRaise && score > 20000000 && luck < 60) {
             return {BetAction::RAISE, 20 + (rand() % 40)};
-        } else if (canRaise && score > 1000000 && luck < 25) {
+        } else if (canRaise && score > 10000000 && luck < 25) {
             return {BetAction::RAISE, 10 + (rand() % 20)};
         }
         return {BetAction::CHECK, 0};
     } else {
-        if (score < 100000 && currentBetToCall > 25) {
+        if (score < 1000000 && currentBetToCall > 25) {
             return (luck < 15) ? Decision{BetAction::CALL, 0} : Decision{BetAction::FOLD, 0};
         }
-        else if (score > 3000000) {
+        else if (score > 30000000) {
             if (canRaise && luck < 70) return {BetAction::RAISE, currentBetToCall * 2 + (rand() % 30)};
             return {BetAction::CALL, 0};
         }
-        else if (score > 1000000 || currentBetToCall < 30) {
-            if (canRaise && luck < 30 && score > 1500000) return {BetAction::RAISE, currentBetToCall + 25};
+        else if (score > 10000000 || currentBetToCall < 30) {
+            if (canRaise && luck < 30 && score > 15000000) return {BetAction::RAISE, currentBetToCall + 25};
             return {BetAction::CALL, 0};
         }
         return (currentBetToCall > 40) ? Decision{BetAction::FOLD, 0} : Decision{BetAction::CALL, 0};
@@ -154,12 +154,13 @@ inline void printHand(const std::vector<Card>& hand, const std::vector<bool>& di
 
 // --- GAME SETUP ---
 inline void chooseOpponents() {
-    std::cout << CYAN << "\nHow many CPUs do you want to play against? (1-7): " << RESET;
-    while (!(std::cin >> numCPUs) || numCPUs < 1 || numCPUs > 7) {
+    std::cout << CYAN << "\nHow many CPUs do you want to play against? (1-4): " << RESET;
+    while (!(std::cin >> numCPUs) || numCPUs < 1 || numCPUs > 4) {
         std::cin.clear(); std::cin.ignore(1000, '\n');
-        std::cout << RED << "Select 1 to 7: " << RESET;
+        std::cout << RED << "Select 1 to 4: " << RESET;
     }
-    startingRank = 9 - numCPUs;
+    // 1 CPU = start from 9, 2 CPUs = start from 8, etc.
+    startingRank = 10 - numCPUs;
     std::cin.ignore(1000, '\n');
 }
 
@@ -183,38 +184,148 @@ inline void placeBet() {
     }
 }
 
-// --- HAND EVALUATION ---
+// --- HAND EVALUATION (FIXED: Proper scoring to avoid ties) ---
 inline HandResult evaluateHand(const std::vector<Card>& hand) {
     std::vector<Card> h = hand;
-    std::sort(h.begin(), h.end(), [](const Card& a, const Card& b){ return a.rank < b.rank; });
+    // Sort descending (high to low)
+    std::sort(h.begin(), h.end(), [](const Card& a, const Card& b){ return a.rank > b.rank; });
+    
     std::map<Rank, int> rc;
     std::map<Symbol, int> sc;
     for (const auto& c : h) { rc[c.rank]++; sc[c.symbol]++; }
+    
+    // Check flush
     bool isFlush = false;
-    for (auto const& [suit, cnt] : sc) if (cnt == 5) isFlush = true;
-    std::vector<int> ranks;
-    for (const auto& c : h) ranks.push_back(static_cast<int>(c.rank));
-    bool isStraight = false;
-    int sHigh = ranks[4];
-    if ((ranks[4]-ranks[0] == 4) && (std::set<int>(ranks.begin(), ranks.end()).size() == 5)) isStraight = true;
-    if (ranks[4] == 14 && ranks[0] == 2 && ranks[1] == 3 && ranks[2] == 4 && ranks[3] == 5) { isStraight = true; sHigh = 5; }
-    int quads = 0, trips = 0, pairs = 0;
-    for (auto const& [r, count] : rc) {
-        if (count == 4) quads++; else if (count == 3) trips++; else if (count == 2) pairs++;
+    Symbol flushSuit;
+    for (auto const& [suit, cnt] : sc) {
+        if (cnt >= 5) {
+            isFlush = true;
+            flushSuit = suit;
+            break;
+        }
     }
+    
+    // Get flush cards sorted descending
+    std::vector<int> flushRanks;
+    if (isFlush) {
+        for (const auto& c : h) {
+            if (c.symbol == flushSuit) {
+                flushRanks.push_back(static_cast<int>(c.rank));
+            }
+        }
+        std::sort(flushRanks.rbegin(), flushRanks.rend());
+    }
+    
+    // Check straight (using unique ranks)
+    std::set<int> uniqueRanksSet;
+    for (const auto& c : h) uniqueRanksSet.insert(static_cast<int>(c.rank));
+    std::vector<int> uniqueRanks(uniqueRanksSet.rbegin(), uniqueRanksSet.rend());
+    
+    bool isStraight = false;
+    int straightHigh = 0;
+    
+    // Check for 5 consecutive cards
+    for (size_t i = 0; i + 4 < uniqueRanks.size(); ++i) {
+        if (uniqueRanks[i] - uniqueRanks[i+4] == 4) {
+            isStraight = true;
+            straightHigh = uniqueRanks[i];
+            break;
+        }
+    }
+    
+    // Check ace-low straight (A-5-4-3-2)
+    if (!isStraight && uniqueRanksSet.count(14) && uniqueRanksSet.count(5) && 
+        uniqueRanksSet.count(4) && uniqueRanksSet.count(3) && uniqueRanksSet.count(2)) {
+        isStraight = true;
+        straightHigh = 5; // Ace is low
+    }
+    
+    // Count frequencies
+    int quads = 0, trips = 0, pairs = 0;
+    int quadRank = 0, tripRank = 0, pair1Rank = 0, pair2Rank = 0;
+    std::vector<int> kickers;
+    
+    for (auto const& [r, count] : rc) {
+        int rankVal = static_cast<int>(r);
+        if (count == 4) { quads++; quadRank = rankVal; }
+        else if (count == 3) { trips++; tripRank = rankVal; }
+        else if (count == 2) { 
+            pairs++; 
+            if (rankVal > pair1Rank) {
+                pair2Rank = pair1Rank;
+                pair1Rank = rankVal;
+            } else if (rankVal > pair2Rank) {
+                pair2Rank = rankVal;
+            }
+        }
+        else if (count == 1) {
+            kickers.push_back(rankVal);
+        }
+    }
+    std::sort(kickers.rbegin(), kickers.rend()); // Descending
+    
     HandValue v = HIGH_CARD;
-    if (isFlush && isStraight && sHigh == 14) v = ROYAL_FLUSH;
-    else if (isFlush && isStraight) v = STRAIGHT_FLUSH;
-    else if (quads > 0) v = FOUR_KIND;
-    else if (trips > 0 && pairs > 0) v = FULL_HOUSE;
-    else if (isFlush) v = FLUSH;
-    else if (isStraight) v = STRAIGHT;
-    else if (trips > 0) v = THREE_KIND;
-    else if (pairs >= 2) v = TWO_PAIR;
-    else if (pairs == 1) v = PAIR;
-
+    int score = 0;
+    const int BASE = 100000000; // 10^8 - ensures categories don't overlap
+    
+    // Royal Flush check (10-J-Q-K-A of same suit)
+    bool isRoyal = (isFlush && isStraight && straightHigh == 14 && 
+                    uniqueRanksSet.count(13) && uniqueRanksSet.count(12) && 
+                    uniqueRanksSet.count(11) && uniqueRanksSet.count(10));
+    
+    if (isRoyal) {
+        v = ROYAL_FLUSH;
+        score = 9 * BASE;
+    }
+    else if (isFlush && isStraight) {
+        v = STRAIGHT_FLUSH;
+        score = 8 * BASE + straightHigh;
+    }
+    else if (quads) {
+        v = FOUR_KIND;
+        score = 7 * BASE + quadRank * 10000 + kickers[0];
+    }
+    else if (trips && pairs) {
+        v = FULL_HOUSE;
+        score = 6 * BASE + tripRank * 10000 + pair1Rank;
+    }
+    else if (isFlush) {
+        v = FLUSH;
+        score = 5 * BASE;
+        // Top 5 flush cards
+        for (int i = 0; i < std::min(5, (int)flushRanks.size()); i++) {
+            score += flushRanks[i] * std::pow(100, 4-i); // 100^4, 100^3, etc.
+        }
+        score /= 100; // Scale down to fit in int
+    }
+    else if (isStraight) {
+        v = STRAIGHT;
+        score = 4 * BASE + straightHigh;
+    }
+    else if (trips) {
+        v = THREE_KIND;
+        score = 3 * BASE + tripRank * 1000000 + kickers[0] * 10000 + kickers[1] * 100 + kickers[2];
+    }
+    else if (pairs >= 2) {
+        v = TWO_PAIR;
+        score = 2 * BASE + pair1Rank * 1000000 + pair2Rank * 10000 + kickers[0];
+    }
+    else if (pairs == 1) {
+        v = PAIR;
+        score = 1 * BASE + pair1Rank * 1000000 + kickers[0] * 10000 + kickers[1] * 100 + kickers[2];
+    }
+    else {
+        v = HIGH_CARD;
+        score = 0;
+        // Use top 5 cards
+        for (int i = 0; i < std::min(5, (int)h.size()); i++) {
+            score += static_cast<int>(h[i].rank) * std::pow(100, 4-i);
+        }
+        score /= 100;
+    }
+    
     std::string n[] = {"","HIGH CARD","PAIR","TWO PAIR","3 OF A KIND","STRAIGHT","FLUSH","FULL HOUSE","4 OF A KIND","STRAIGHT FLUSH","ROYAL FLUSH"};
-    return { v, (static_cast<int>(v) * 100) + ranks[4], n[v] };
+    return { v, score, n[v] };
 }
 
 inline void waitForEnter() {
@@ -233,14 +344,14 @@ inline void showFile(const std::string& f) {
     waitForEnter();
 }
 
-// --- DECK CLASS (FIXED: Always 52 cards) ---
+// --- DECK CLASS (FIXED: Accepts starting rank) ---
 class Deck {
 private:
     std::vector<Card> cards;
 public:
-    Deck() {
-        // Always create full 52-card deck (2 through Ace)
-        for (int r = 2; r <= 14; ++r)
+    Deck(int minRank = 2) {
+        // Create deck from minRank to Ace (14)
+        for (int r = minRank; r <= 14; ++r)
             for (int s = 1; s <= 4; ++s)
                 cards.push_back({ static_cast<Rank>(r), static_cast<Symbol>(s) });
     }

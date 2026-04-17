@@ -185,7 +185,8 @@ void playGame(ma_engine* pMainEngine) {
     srand(time(nullptr));
 
     for (int t = 1; t <= totalTurns; t++) {
-        Deck myDeck;
+        // FIX: Create deck with startingRank based on CPU count
+        Deck myDeck(startingRank);
         myDeck.shuffleDeck();
         
         std::vector<Card> pHand;
@@ -241,14 +242,14 @@ void playGame(ma_engine* pMainEngine) {
         std::cout << YELLOW << "POT: $" << pot << RESET << "\n\n";
         
         int bestScore = -1;
-        std::vector<int> winners;
+        int winner = -1;  // FIX: Only track one winner (index: 0=player, 1+=CPU)
         
         if (inHand[0]) {
             HandResult pRes = evaluateHand(pHand);
             std::cout << "YOUR HAND: "; printHand(pHand);
             std::cout << " >> " << CYAN << pRes.name << RESET << "\n";
             bestScore = pRes.totalScore;
-            winners.push_back(0);
+            winner = 0;
         } else std::cout << "YOU (folded)\n";
         
         // CPU hands in Yellow
@@ -262,23 +263,23 @@ void playGame(ma_engine* pMainEngine) {
             printHand(cpuHands[j]);
             std::cout << " >> " << CYAN << cRes.name << RESET << "\n";
             
+            // FIX: Strictly greater than - no ties allowed, first player with highest score wins
             if (cRes.totalScore > bestScore) {
                 bestScore = cRes.totalScore;
-                winners.clear();
-                winners.push_back(j+1);
-            } else if (cRes.totalScore == bestScore) winners.push_back(j+1);
+                winner = j+1;
+            }
+            // Removed: else if equal - we keep the first winner (player wins ties)
         }
         
-        // Award
-        int winAmount = pot / winners.size();
-        bool playerWon = false;
+        // Award to single winner
         std::cout << "\n" << BOLD;
-        for (int w : winners) {
-            if (w == 0) {
-                playerBalance += winAmount;
-                playerWon = true;
-                std::cout << GREEN << ">> YOU WIN $" << winAmount << "! <<\n";
-            } else std::cout << RED << ">> CPU " << w << " WINS $" << winAmount << "! <<\n";
+        if (winner == 0) {
+            playerBalance += pot;
+            std::cout << GREEN << ">> YOU WIN $" << pot << "! <<\n";
+        } else if (winner > 0) {
+            std::cout << RED << ">> CPU " << winner << " WINS $" << pot << "! <<\n";
+        } else {
+            std::cout << "No winner.\n";
         }
         std::cout << RESET;
         
@@ -286,7 +287,7 @@ void playGame(ma_engine* pMainEngine) {
         ma_engine_stop(pMainEngine);
         ma_engine eng; 
         ma_engine_init(NULL, &eng);
-        ma_engine_play_sound(&eng, playerWon ? "jackpot.wav" : "fart.wav", NULL);
+        ma_engine_play_sound(&eng, (winner == 0) ? "jackpot.wav" : "fart.wav", NULL);
         sleepMs(2000);
         ma_engine_uninit(&eng);
         ma_engine_start(pMainEngine);
