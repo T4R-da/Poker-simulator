@@ -12,6 +12,7 @@
 #include <conio.h>
 #include <map>
 #include <set>
+#include <cstdlib>
 
 // ANSI Colors
 #define RESET   "\033[0m"
@@ -26,6 +27,7 @@ inline int playerBalance = 1000;
 inline int currentBet = 0;
 inline int startingRank = 2; 
 inline int numCPUs = 1;
+const int MAX_RAISES = 3; // Betting cap
 
 enum class Rank   { TWO = 2, THREE, FOUR, FIVE, SIX, SEVEN, EIGHT, NINE, TEN, JACK, QUEEN, KING, ACE };
 enum class Symbol { SPADES = 1, CLUBS = 2, DIAMONDS = 3, HEART = 4 };
@@ -54,6 +56,52 @@ struct Card {
     }
 };
 
+// --- TIMING UTILS ---
+inline void sleepMs(int ms) {
+    std::this_thread::sleep_for(std::chrono::milliseconds(ms));
+}
+
+inline void sleepRandom() {
+    sleepMs(1000 + (rand() % 1000)); // 1-2 seconds
+}
+
+// --- BETTING SYSTEM ---
+enum class BetAction { FOLD, CHECK, CALL, RAISE };
+
+struct Decision {
+    BetAction action;
+    int amount;
+};
+
+inline Decision cpuDecideBet(const std::vector<Card>& hand, int currentBetToCall, int raisesSoFar, int maxRaises) {
+    HandResult hr = evaluateHand(hand);
+    int score = hr.totalScore;
+    int luck = rand() % 100;
+    bool canRaise = (raisesSoFar < maxRaises);
+    
+    if (currentBetToCall == 0) {
+        if (canRaise && score > 2000000 && luck < 60) {
+            return {BetAction::RAISE, 20 + (rand() % 40)};
+        } else if (canRaise && score > 1000000 && luck < 25) {
+            return {BetAction::RAISE, 10 + (rand() % 20)};
+        }
+        return {BetAction::CHECK, 0};
+    } else {
+        if (score < 100000 && currentBetToCall > 25) {
+            return (luck < 15) ? Decision{BetAction::CALL, 0} : Decision{BetAction::FOLD, 0};
+        }
+        else if (score > 3000000) {
+            if (canRaise && luck < 70) return {BetAction::RAISE, currentBetToCall * 2 + (rand() % 30)};
+            return {BetAction::CALL, 0};
+        }
+        else if (score > 1000000 || currentBetToCall < 30) {
+            if (canRaise && luck < 30 && score > 1500000) return {BetAction::RAISE, currentBetToCall + 25};
+            return {BetAction::CALL, 0};
+        }
+        return (currentBetToCall > 40) ? Decision{BetAction::FOLD, 0} : Decision{BetAction::CALL, 0};
+    }
+}
+
 // --- VISUALS (ASCII ART) ---
 inline void printHeader() {
     std::cout << MAGENTA << BOLD;
@@ -80,6 +128,28 @@ inline void bootingSequence() {
     std::this_thread::sleep_for(std::chrono::milliseconds(500));
 }
 
+// --- CARD DISPLAY ---
+inline void printHand(const std::vector<Card>& hand, const std::vector<bool>& discard = {}) {
+    for (const auto& c : hand) {
+        c.print();
+        std::cout << " ";
+    }
+    std::cout << "\n";
+    
+    if (!discard.empty()) {
+        for (size_t i = 0; i < hand.size() && i < 5; i++) {
+            if (discard[i]) {
+                std::cout << RED << "[DISCARD]" << RESET;
+            } else {
+                std::cout << "         ";
+            }
+            if (hand[i].rank == Rank::TEN) std::cout << " "; 
+        }
+        std::cout << "\n";
+    }
+}
+
+// --- GAME SETUP ---
 inline void chooseOpponents() {
     std::cout << CYAN << "\nHow many CPUs do you want to play against? (1-7): " << RESET;
     while (!(std::cin >> numCPUs) || numCPUs < 1 || numCPUs > 7) {
@@ -110,6 +180,7 @@ inline void placeBet() {
     }
 }
 
+// --- HAND EVALUATION ---
 inline HandResult evaluateHand(const std::vector<Card>& hand) {
     std::vector<Card> h = hand;
     std::sort(h.begin(), h.end(), [](const Card& a, const Card& b){ return a.rank < b.rank; });
@@ -159,25 +230,33 @@ inline void showFile(const std::string& f) {
     waitForEnter();
 }
 
+// --- DECK CLASS (FIXED: Always 52 cards) ---
 class Deck {
 private:
     std::vector<Card> cards;
 public:
     Deck() {
-        for (int r = startingRank; r <= 14; ++r)
+        // Always create full 52-card deck (2 through Ace)
+        for (int r = 2; r <= 14; ++r)
             for (int s = 1; s <= 4; ++s)
                 cards.push_back({ static_cast<Rank>(r), static_cast<Symbol>(s) });
     }
     void shuffleDeck() {
-        std::random_device rd; std::mt19937 g(rd());
+        std::random_device rd; 
+        std::mt19937 g(rd());
         std::shuffle(cards.begin(), cards.end(), g);
     }
     Card drawCard() { 
         if(cards.empty()) return {Rank::TWO, Symbol::SPADES};
-        Card c = cards.back(); cards.pop_back(); return c; 
+        Card c = cards.back(); 
+        cards.pop_back(); 
+        return c; 
     }
+    bool isEmpty() const { return cards.empty(); }
+    size_t remaining() const { return cards.size(); }
 };
 
+// --- CPU LOGIC ---
 inline std::vector<bool> cpuDecide1(const std::vector<Card>& hand) {
     std::map<Rank, int> rc;
     for (const auto& c : hand) rc[c.rank]++;
